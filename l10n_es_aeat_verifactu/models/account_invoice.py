@@ -161,7 +161,7 @@ class account_invoice(models.Model):
         res = super(account_invoice, self).invoice_validate() #action_number()
         for record in self:
            if record.verifactu_enabled and record.verifactu_state == "not_sent":
-                #record.verifactu_registration_date = datetime.now()
+                record.verifactu_registration_date = datetime.now()
                 #raise Warning(record.verifactu_registration_date)
                 record._generate_verifactu_chaining()
                 #record._process_verifactu_send()
@@ -321,13 +321,11 @@ class account_invoice(models.Model):
         #if self.verifactu_registration_date < datetime.now():
         #self.verifactu_registration_date = datetime.now()
         madrid = pytz.timezone('Europe/Madrid')
-        create_date = datetime.strptime(datetime.now(), '%Y-%m-%d %H:%M:%S')
-        #create_date = datetime.strptime(self.verifactu_registration_date, '%Y-%m-%d %H:%M:%S')
+        create_date = datetime.strptime(self.verifactu_registration_date, '%Y-%m-%d %H:%M:%S')
         #create_date = create_date.replace(tzinfo=pytz.UTC).isoformat()
         #raise Warning(create_date)
         create_date = madrid.localize(create_date)
         iso_date = create_date.isoformat()
-        self.verifactu_registration_date = iso_date
         return iso_date
         """return (
             pytz.utc.localize(self.verifactu_registration_date)
