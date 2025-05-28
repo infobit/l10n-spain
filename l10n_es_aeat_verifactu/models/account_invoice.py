@@ -14,7 +14,7 @@ import json
 import pytz
 from requests import Session
 _logger = logging.getLogger(__name__)
-from datetime import datetime
+from datetime import datetime, timedelta
 try:
    from zeep import Client, Settings
    from zeep.plugins import HistoryPlugin
@@ -162,14 +162,13 @@ class account_invoice(models.Model):
         for record in self:
            if record.verifactu_enabled and record.verifactu_state == "not_sent":
                 record.verifactu_registration_date = datetime.now()
-                #raise Warning(record.verifactu_registration_date)
                 record._generate_verifactu_chaining()
                 #record._process_verifactu_send()
                 #LLAMADA A LA GENERACIÓN DEL HASH Y QR
                 #self._compute_verifactu_hash()
                 record._compute_verifactu_qr_url()
                 #LLAMADA AL ENVIO A VERIFACTU
-                #self.send_verifactu()
+                record.send_verifactu()
         return res
 
     def _generate_verifactu_chaining(self):
@@ -318,26 +317,12 @@ class account_invoice(models.Model):
 
     def _get_verifactu_registration_date(self):
         # Date format must be ISO 8601
-        #if self.verifactu_registration_date < datetime.now():
-        #self.verifactu_registration_date = datetime.now()
         madrid = pytz.timezone('Europe/Madrid')
-        create_date = datetime.strptime(self.verifactu_registration_date, '%Y-%m-%d %H:%M:%S')
-        #create_date = create_date.replace(tzinfo=pytz.UTC).isoformat()
-        #raise Warning(create_date)
-        create_date = madrid.localize(create_date)
+        dt = datetime.strptime(self.verifactu_registration_date, '%Y-%m-%d %H:%M:%S')
+        dt2 = dt + timedelta(hours=2)
+        create_date = madrid.localize(dt2)
         iso_date = create_date.isoformat()
         return iso_date
-        """return (
-            pytz.utc.localize(self.verifactu_registration_date)
-            .astimezone()
-            .isoformat(timespec="seconds")
-         )"""
-        """else:
-         return (
-            pytz.utc.localize(datetime.now())
-            .astimezone()
-            .isoformat(timespec="seconds")
-        )"""
 
     @api.model
     def _get_verifactu_hash_string(self):
@@ -561,7 +546,6 @@ class account_invoice(models.Model):
             #BUSCAR IMPUESTO
             imp = self.env['account.tax'].search([('name', '=', tax_line.name)])
             if imp:
-               #for tax_line in inv_line.invoice_line_tax_id:
                if imp in breakdown_taxes:
                    operation_type = self._get_operation_type(
                     imp, taxes_S1, taxes_S2, taxes_N1, taxes_N2
@@ -574,35 +558,17 @@ class account_invoice(models.Model):
                     "TipoImpositivo": round(imp.amount * 100,2),
                     "CuotaRepercutida": tax_line.amount
                    }
-                   #raise Warning(tax_dict)
-                   # si es exenta:
-                   # "OperacionExenta": "", # TODO
-                   #taxes_dict.update(self._get_verifactu_tax_dict(tax_line, tax_lines))
-                   #tax_lines.append(tax_dict)
-                   #taxes_dict["DetalleDesglose"].append(tax_dict)
-                   #key = "CuotaTotal"
-                   #taxes_dict[key] = tax_line["amount"]
-                   # Recargo de equivalencia
-                   """lines = self.tax_line.search([('name', '=', )]) #self.invoice_line.invoice_line_tax_id
-                   req = []
-                   for re_line in lines:
-                       if not re_line.name == tax_line.name:
-                          if reqline in taxes_req:
-                             tax_dict["TipoRecargoEquivalencia"] = round(reqline.amount * 100,2)
-                          #buscar tax_line del recargo
-                          #impreq = self.tax_line.filtered(lambda x: x.name == re_line.name)
-                          #if impreq:
-                          #raise Warning(impreq)
-                          tax_dict["CuotaRecargoEquivalencia"] = re_line.amount
-                          #raise Warning(re_line)"""
-                   #req_tax = []
-                   #req_tax = re_lines.mapped("tax_ids") & taxes_req
-                   #if req_tax:
-                   #   raise Warning(req_tax)
-                   #if imp in taxes_req:
-                   #   #taxes_dict[key] = invoice_line["amount"] + taxes_lines[req_tax]["amount"]
-                   #   tax_dict["TipoRecargoEquivalencia"] = round(imp.amount * 100,2)
-                   #   tax_dict["CuotaRecargoEquivalencia"] = tax_line.amount
+                   #RECARGO DE EQUIVALENCIA 
+                   reqeq = self.env['account.fiscal.position.tax'].search([('tax_src_id', '=', imp.id), ('tax_dest_id', 'in', taxes_req.ids)])
+                   #raise Warning(reqeq[0].tax_dest_id.name)
+                   if reqeq:
+                      tax_line_req = self.tax_line.filtered(lambda x: x.name == reqeq[0].tax_dest_id.name)
+                      #raise Warning(tax_line_req)
+                      if tax_line_req:
+                         tipo_recargo = round(reqeq[0].tax_dest_id.amount * 100,2)
+                         cuota_recargo = tax_line_req[0].amount
+                         tax_dict['TipoRecargoEquivalencia'] = tipo_recargo
+                         tax_dict['CuotaRecargoEquivalencia'] = cuota_recargo
                    taxes_dict["DetalleDesglose"].append(tax_dict)
         #raise Warning(taxes_dict)
         return (
@@ -730,6 +696,12 @@ class account_invoice(models.Model):
                 "NIF": self.company_id.partner_id.vat[2:] #_parse_aeat_vat_info()[2],
             },
         }
+        registration_date = self.verifactu_registration_date
+        if (
+            self.verifactu_state == "sent_w_errors"
+            and registration_date < fields.Datetime.now()
+        ):
+            header.update({"RemisionVoluntaria": {"Incidencia": "S"}})
         return header
 
     def _get_verifactu_invoice_dict(self):
